@@ -22,42 +22,45 @@ class EventSubscriber {
     }
 }
 
-function removeSubscribersWithContext(oldSubscribers, context, newSubscribers) {
-    for (const subscriber of oldSubscribers) {
+function removeSubscribersWithContext(subscribers, context) {
+    const newSubscribers = [];
+    for (const subscriber of subscribers) {
         if (subscriber.context !== context) {
             newSubscribers.push(subscriber);
         }
     }
+
+    return newSubscribers;
 }
 
 class SeveralEventSubscriber extends EventSubscriber {
-    constructor(context, handler, callCount) {
+    constructor(context, handler, amount) {
         super(context, handler);
-        this._callCount = callCount;
+        this._amount = amount;
+        this._counter = 0;
     }
 
     onEvent() {
-        if (this._callCount === 0) {
-            return;
+        if (this._counter < this._amount) {
+            super.onEvent();
+            ++this._counter;
         }
-        super.onEvent();
-        this._callCount--;
     }
 }
 
 class FrequencyEventSubscriber extends EventSubscriber {
     constructor(context, handler, frequency) {
         super(context, handler);
-        this._frequency = frequency - 1;
-        this._counter = 0;
+        this._frequency = frequency;
+        this._counter = this._frequency - 1;
     }
 
     onEvent() {
-        if (this._counter === 0) {
+        ++this._counter;
+
+        if (this._counter === this._frequency) {
             super.onEvent();
-            this._counter = this._frequency;
-        } else {
-            this._counter--;
+            this._counter = 0;
         }
     }
 }
@@ -68,7 +71,7 @@ class FrequencyEventSubscriber extends EventSubscriber {
  */
 function getEmitter() {
     return {
-        subscribers: new Map(),
+        _subscribers: new Map(),
 
         /**
          * Найти все события, которые принадлежат пространству имен и на которые кто-либо
@@ -81,7 +84,7 @@ function getEmitter() {
             const prefix = namespace + '.';
 
             const events = [];
-            for (const event of this.subscribers.keys()) {
+            for (const event of this._subscribers.keys()) {
                 if (event === namespace || event.startsWith(prefix)) {
                     events.push(event);
                 }
@@ -90,45 +93,21 @@ function getEmitter() {
             return events;
         },
 
-        /**
-         * Подписаться на событие, используя указанный способ подписки
-         * @param {String} event
-         * @param {EventSubscriber} subscriber
-         * @returns {Object} this
-         * @private
-         */
         _subscribe(event, subscriber) {
-            if (!this._hasSubscribersFor(event)) {
-                this.subscribers.set(event, []);
+            if (!this._subscribers.has(event)) {
+                this._subscribers.set(event, []);
             }
 
-            this.subscribers.get(event)
+            this._subscribers.get(event)
                 .push(subscriber);
 
             return this;
         },
 
-        /**
-         * Подписаться на событие
-         * @param {String} event
-         * @param {Object} context
-         * @param {Function} handler
-         * @returns {Object} this
-         */
         on: function (event, context, handler) {
             console.info(event, context, handler);
 
             return this._subscribe(event, new EventSubscriber(context, handler));
-        },
-
-        /**
-         * Есть ли подписчики для данного события
-         * @param {String} event
-         * @returns {boolean}
-         * @private
-         */
-        _hasSubscribersFor: function (event) {
-            return this.subscribers.has(event);
         },
 
         /**
@@ -138,19 +117,13 @@ function getEmitter() {
          * @private
          */
         _unsubscribeSimple: function (event, context) {
-            if (this._hasSubscribersFor(event)) {
-                const newSubscribers = [];
-                removeSubscribersWithContext(this.subscribers.get(event), context, newSubscribers);
-                this.subscribers.set(event, newSubscribers);
+            if (this._subscribers.has(event)) {
+                const newSubscribers = removeSubscribersWithContext(this._subscribers.get(event),
+                    context);
+                this._subscribers.set(event, newSubscribers);
             }
         },
 
-        /**
-         * Отписаться от события
-         * @param {String} event
-         * @param {Object} context
-         * @returns {Object} this
-         */
         off: function (event, context) {
             console.info(event, context);
             for (const subEvent of this._getAllEvents(event)) {
@@ -160,22 +133,18 @@ function getEmitter() {
             return this;
         },
 
-        _emitSimple: function (event) {
-            console.info(event);
-            if (this._hasSubscribersFor(event)) {
-                for (const subscriber of this.subscribers.get(event)) {
-                    subscriber.onEvent();
-                }
-            }
-        },
-
         /**
          * Уведомить о событии
          * @param {String} event
          * @returns {Object} this
          */
         emit: function (event) {
-            this._emitSimple(event);
+            console.info(event);
+            if (this._subscribers.has(event)) {
+                for (const subscriber of this._subscribers.get(event)) {
+                    subscriber.onEvent();
+                }
+            }
 
             if (event.includes('.')) {
                 this.emit(event.slice(0, event.lastIndexOf('.')));
@@ -184,15 +153,6 @@ function getEmitter() {
             return this;
         },
 
-        /**
-         * Подписаться на событие с ограничением по количеству полученных уведомлений
-         * @star
-         * @param {String} event
-         * @param {Object} context
-         * @param {Function} handler
-         * @param {Number} times – сколько раз получить уведомление
-         * @returns {Object} this
-         */
         several: function (event, context, handler, times) {
             console.info(event, context, handler, times);
             if (times <= 0) {
@@ -202,15 +162,6 @@ function getEmitter() {
             return this._subscribe(event, new SeveralEventSubscriber(context, handler, times));
         },
 
-        /**
-         * Подписаться на событие с ограничением по частоте получения уведомлений
-         * @star
-         * @param {String} event
-         * @param {Object} context
-         * @param {Function} handler
-         * @param {Number} frequency – как часто уведомлять
-         * @returns {Object} this
-         */
         through: function (event, context, handler, frequency) {
             console.info(event, context, handler, frequency);
             if (frequency <= 0) {
